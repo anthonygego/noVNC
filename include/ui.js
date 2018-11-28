@@ -20,7 +20,7 @@ var UI;
     window.onload = function () { UI.keyboardinputReset(); };
     Util.load_scripts(["webutil.js", "base64.js", "websock.js", "des.js",
                        "keysymdef.js", "keyboard.js", "input.js", "display.js",
-                       "jsunzip.js", "rfb.js", "keysym.js"]);
+                       "jsunzip.js", "rfb.js", "keysym.js", "domkeytable.js", "xtscancodes.js"]);
 
     UI = {
 

@@ -26,262 +26,169 @@ var kbdUtil = (function() {
     function isLinux() {
         return navigator && !!(/linux/i).exec(navigator.platform);
     }
-
-    // Return true if a modifier which is not the specified char modifier (and is not shift) is down
-    function hasShortcutModifier(charModifier, currentModifiers) {
-        var mods = {};
-        for (var key in currentModifiers) {
-            if (parseInt(key) !== XK_Shift_L) {
-                mods[key] = currentModifiers[key];
-            }
-        }
-
-        var sum = 0;
-        for (var k in currentModifiers) {
-            if (mods[k]) {
-                ++sum;
-            }
-        }
-        if (hasCharModifier(charModifier, mods)) {
-            return sum > charModifier.length;
-        }
-        else {
-            return sum > 0;
-        }
+    function isIE() {
+        return navigator && !!(/trident/i).exec(navigator.userAgent);
+    }
+    function isEdge() {
+        return navigator && !!(/edge/i).exec(navigator.userAgent);
     }
 
-    // Return true if the specified char modifier is currently down
-    function hasCharModifier(charModifier, currentModifiers) {
-        if (charModifier.length === 0) { return false; }
-
-        for (var i = 0; i < charModifier.length; ++i) {
-            if (!currentModifiers[charModifier[i]]) {
-                return false;
+    // Get 'KeyboardEvent.code', handling legacy browsers
+    function getKeycode(evt){
+        // Are we getting proper key identifiers?
+        // (unfortunately Firefox and Chrome are crappy here and gives
+        // us an empty string on some platforms, rather than leaving it
+        // undefined)
+        if (evt.code) {
+            // Mozilla isn't fully in sync with the spec yet
+            switch (evt.code) {
+                case 'OSLeft': return 'MetaLeft';
+                case 'OSRight': return 'MetaRight';
             }
+
+            return evt.code;
         }
-        return true;
+
+        // The de-facto standard is to use Windows Virtual-Key codes
+        // in the 'keyCode' field for non-printable characters. However
+        // Webkit sets it to the same as charCode in 'keypress' events.
+        if ((evt.type !== 'keypress') && (evt.keyCode in vkeys)) {
+            var code = vkeys[evt.keyCode];
+
+            // macOS has messed up this code for some reason
+            if (isMac() && (code === 'ContextMenu')) {
+                code = 'MetaRight';
+            }
+
+            // The keyCode doesn't distinguish between left and right
+            // for the standard modifiers
+            if (evt.location === 2) {
+                switch (code) {
+                    case 'ShiftLeft': return 'ShiftRight';
+                    case 'ControlLeft': return 'ControlRight';
+                    case 'AltLeft': return 'AltRight';
+                }
+            }
+
+            // Nor a bunch of the numpad keys
+            if (evt.location === 3) {
+                switch (code) {
+                    case 'Delete': return 'NumpadDecimal';
+                    case 'Insert': return 'Numpad0';
+                    case 'End': return 'Numpad1';
+                    case 'ArrowDown': return 'Numpad2';
+                    case 'PageDown': return 'Numpad3';
+                    case 'ArrowLeft': return 'Numpad4';
+                    case 'ArrowRight': return 'Numpad6';
+                    case 'Home': return 'Numpad7';
+                    case 'ArrowUp': return 'Numpad8';
+                    case 'PageUp': return 'Numpad9';
+                    case 'Enter': return 'NumpadEnter';
+                }
+            }
+
+            return code;
+        }
+
+        return 'Unidentified';
     }
 
-    // Helper object tracking modifier key state
-    // and generates fake key events to compensate if it gets out of sync
-    function ModifierSync(charModifier) {
-        if (!charModifier) {
-            if (isMac()) {
-                // on Mac, Option (AKA Alt) is used as a char modifier
-                charModifier = [XK_Alt_L];
+    // Get 'KeyboardEvent.key', handling legacy browsers
+    function getKey(evt) {
+        // Are we getting a proper key value?
+        if (evt.key !== undefined) {
+            // IE and Edge use some ancient version of the spec
+            // https://developer.microsoft.com/en-us/microsoft-edge/platform/issues/8860571/
+            switch (evt.key) {
+                case 'Spacebar': return ' ';
+                case 'Esc': return 'Escape';
+                case 'Scroll': return 'ScrollLock';
+                case 'Win': return 'Meta';
+                case 'Apps': return 'ContextMenu';
+                case 'Up': return 'ArrowUp';
+                case 'Left': return 'ArrowLeft';
+                case 'Right': return 'ArrowRight';
+                case 'Down': return 'ArrowDown';
+                case 'Del': return 'Delete';
+                case 'Divide': return '/';
+                case 'Multiply': return '*';
+                case 'Subtract': return '-';
+                case 'Add': return '+';
+                case 'Decimal': return evt.char;
             }
-            else if (isWindows()) {
-                // on Windows, Ctrl+Alt is used as a char modifier
-                charModifier = [XK_Alt_L, XK_Control_L];
+
+            // Mozilla isn't fully in sync with the spec yet
+            switch (evt.key) {
+                case 'OS': return 'Meta';
             }
-            else if (isLinux()) {
-                // on Linux, ISO Level 3 Shift (AltGr) is used as a char modifier
-                charModifier = [XK_ISO_Level3_Shift];
-            }
-            else {
-                charModifier = [];
+
+            // IE and Edge have broken handling of AltGraph so we cannot
+            // trust them for printable characters
+            if ((evt.key.length !== 1) || (!isIE() && !isEdge())) {
+                return evt.key;
             }
         }
 
-        var state = {};
-        state[XK_Control_L] = false;
-        state[XK_Alt_L] = false;
-        state[XK_ISO_Level3_Shift] = false;
-        state[XK_Shift_L] = false;
-        state[XK_Meta_L] = false;
-
-        function sync(evt, keysym) {
-            var result = [];
-            function syncKey(keysym) {
-                return {keysym: keysyms.lookup(keysym), type: state[keysym] ? 'keydown' : 'keyup'};
-            }
-
-            if (evt.ctrlKey !== undefined &&
-                evt.ctrlKey !== state[XK_Control_L] && keysym !== XK_Control_L) {
-                state[XK_Control_L] = evt.ctrlKey;
-                result.push(syncKey(XK_Control_L));
-            }
-            if (evt.altKey !== undefined &&
-                evt.altKey !== state[XK_Alt_L] && keysym !== XK_Alt_L) {
-                state[XK_Alt_L] = evt.altKey;
-                result.push(syncKey(XK_Alt_L));
-            }
-            if (evt.altGraphKey !== undefined &&
-                evt.altGraphKey !== state[XK_ISO_Level3_Shift] && keysym !== XK_ISO_Level3_Shift) {
-                state[XK_ISO_Level3_Shift] = evt.altGraphKey;
-                result.push(syncKey(XK_ISO_Level3_Shift));
-            }
-            if (evt.shiftKey !== undefined &&
-                evt.shiftKey !== state[XK_Shift_L] && keysym !== XK_Shift_L) {
-                state[XK_Shift_L] = evt.shiftKey;
-                result.push(syncKey(XK_Shift_L));
-            }
-            if (evt.metaKey !== undefined &&
-                evt.metaKey !== state[XK_Meta_L] && keysym !== XK_Meta_L) {
-                state[XK_Meta_L] = evt.metaKey;
-                result.push(syncKey(XK_Meta_L));
-            }
-            return result;
-        }
-        function syncKeyEvent(evt, down) {
-            var obj = getKeysym(evt);
-            var keysym = obj ? obj.keysym : null;
-
-            // first, apply the event itself, if relevant
-            if (keysym !== null && state[keysym] !== undefined) {
-                state[keysym] = down;
-            }
-            return sync(evt, keysym);
+        // Try to deduce it based on the physical key
+        var code = getKeycode(evt);
+        if (code in fixedkeys) {
+            return fixedkeys[code];
         }
 
-        return {
-            // sync on the appropriate keyboard event
-            keydown: function(evt) { return syncKeyEvent(evt, true);},
-            keyup: function(evt) { return syncKeyEvent(evt, false);},
-            // Call this with a non-keyboard event (such as mouse events) to use its modifier state to synchronize anyway
-            syncAny: function(evt) { return sync(evt);},
+        // If that failed, then see if we have a printable character
+        if (evt.charCode) {
+            return String.fromCharCode(evt.charCode);
+        }
 
-            // is a shortcut modifier down?
-            hasShortcutModifier: function() { return hasShortcutModifier(charModifier, state); },
-            // if a char modifier is down, return the keys it consists of, otherwise return null
-            activeCharModifier: function() { return hasCharModifier(charModifier, state) ? charModifier : null; }
-        };
-    }
-
-    // Get a key ID from a keyboard event
-    // May be a string or an integer depending on the available properties
-    function getKey(evt){
-        if ('keyCode' in evt && 'key' in evt) {
-            return evt.key + ':' + evt.keyCode;
-        }
-        else if ('keyCode' in evt) {
-            return evt.keyCode;
-        }
-        else {
-            return evt.key;
-        }
+        // At this point we have nothing left to go on
+        return 'Unidentified';
     }
 
     // Get the most reliable keysym value we can get from a key event
-    // if char/charCode is available, prefer those, otherwise fall back to key/keyCode/which
     function getKeysym(evt){
-        var codepoint;
-        if (evt.char && evt.char.length === 1) {
-            codepoint = evt.char.charCodeAt();
-        }
-        else if (evt.charCode) {
-            codepoint = evt.charCode;
-        }
-        else if (evt.keyCode && evt.type === 'keypress') {
-            // IE10 stores the char code as keyCode, and has no other useful properties
-            codepoint = evt.keyCode;
-        }
-        if (codepoint) {
-            var res = keysyms.fromUnicode(substituteCodepoint(codepoint));
-            if (res) {
-                return res;
-            }
-        }
-        // we could check evt.key here.
-        // Legal values are defined in http://www.w3.org/TR/DOM-Level-3-Events/#key-values-list,
-        // so we "just" need to map them to keysym, but AFAIK this is only available in IE10, which also provides evt.key
-        // so we don't *need* it yet
-        if (evt.keyCode) {
-            return keysyms.lookup(keysymFromKeyCode(evt.keyCode, evt.shiftKey));
-        }
-        if (evt.which) {
-            return keysyms.lookup(keysymFromKeyCode(evt.which, evt.shiftKey));
-        }
-        return null;
-    }
+        var key = getKey(evt);
 
-    // Given a keycode, try to predict which keysym it might be.
-    // If the keycode is unknown, null is returned.
-    function keysymFromKeyCode(keycode, shiftPressed) {
-        if (typeof(keycode) !== 'number') {
+        if (key === 'Unidentified') {
             return null;
         }
-        // won't be accurate for azerty
-        if (keycode >= 0x30 && keycode <= 0x39) {
-            return keycode; // digit
-        }
-        if (keycode >= 0x41 && keycode <= 0x5a) {
-            // remap to lowercase unless shift is down
-            return shiftPressed ? keycode : keycode + 32; // A-Z
-        }
-        if (keycode >= 0x60 && keycode <= 0x69) {
-            return XK_KP_0 + (keycode - 0x60); // numpad 0-9
-        }
 
-        switch(keycode) {
-            case 0x20: return XK_space;
-            case 0x6a: return XK_KP_Multiply;
-            case 0x6b: return XK_KP_Add;
-            case 0x6c: return XK_KP_Separator;
-            case 0x6d: return XK_KP_Subtract;
-            case 0x6e: return XK_KP_Decimal;
-            case 0x6f: return XK_KP_Divide;
-            case 0xbb: return XK_plus;
-            case 0xbc: return XK_comma;
-            case 0xbd: return XK_minus;
-            case 0xbe: return XK_period;
+        // First look up special keys
+        if (key in DOMKeyTable) {
+            var location = evt.location;
+
+            // Safari screws up location for the right cmd key
+            if ((key === 'Meta') && (location === 0)) {
+                location = 2;
+            }
+
+            if ((location === undefined) || (location > 3)) {
+                location = 0;
+            }
+
+            return DOMKeyTable[key][location];
         }
 
-        return nonCharacterKey({keyCode: keycode});
-    }
+        // Now we need to look at the Unicode symbol instead
 
-    // if the key is a known non-character key (any key which doesn't generate character data)
-    // return its keysym value. Otherwise return null
-    function nonCharacterKey(evt) {
-        // evt.key not implemented yet
-        if (!evt.keyCode) { return null; }
-        var keycode = evt.keyCode;
+        var codepoint;
 
-        if (keycode >= 0x70 && keycode <= 0x87) {
-            return XK_F1 + keycode - 0x70; // F1-F24
+        // Special key? (FIXME: Should have been caught earlier)
+        if (key.length !== 1) {
+            return null;
         }
-        switch (keycode) {
 
-            case 8 : return XK_BackSpace;
-            case 13 : return XK_Return;
-
-            case 9 : return XK_Tab;
-
-            case 27 : return XK_Escape;
-            case 46 : return XK_Delete;
-
-            case 36 : return XK_Home;
-            case 35 : return XK_End;
-            case 33 : return XK_Page_Up;
-            case 34 : return XK_Page_Down;
-            case 45 : return XK_Insert;
-
-            case 37 : return XK_Left;
-            case 38 : return XK_Up;
-            case 39 : return XK_Right;
-            case 40 : return XK_Down;
-
-            case 16 : return XK_Shift_L;
-            case 17 : return XK_Control_L;
-            case 18 : return XK_Alt_L; // also: Option-key on Mac
-
-            case 224 : return XK_Meta_L;
-            case 225 : return XK_ISO_Level3_Shift; // AltGr
-            case 91 : return XK_Super_L; // also: Windows-key
-            case 92 : return XK_Super_R; // also: Windows-key
-            case 93 : return XK_Menu; // also: Windows-Menu, Command on Mac
-            default: return null;
+        codepoint = key.charCodeAt();
+        if (codepoint) {
+            return keysyms.lookup(codepoint);
         }
-    }
+
+        return null;
+    }    
+    
     return {
-        hasShortcutModifier : hasShortcutModifier,
-        hasCharModifier : hasCharModifier,
-        ModifierSync : ModifierSync,
         getKey : getKey,
-        getKeysym : getKeysym,
-        keysymFromKeyCode : keysymFromKeyCode,
-        nonCharacterKey : nonCharacterKey,
-        substituteCodepoint : substituteCodepoint
+        getKeycode : getKeycode,
+        getKeysym : getKeysym
     };
 })();
 
