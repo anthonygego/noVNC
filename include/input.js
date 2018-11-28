@@ -16,21 +16,6 @@ var Keyboard, Mouse;
     //
     // Keyboard event handler
     //
-    function isMac() {
-        return navigator && !!(/mac/i).exec(navigator.platform);
-    }
-    function isWindows() {
-        return navigator && !!(/win/i).exec(navigator.platform);
-    }
-    function isLinux() {
-        return navigator && !!(/linux/i).exec(navigator.platform);
-    }
-    function isIE() {
-        return navigator && !!(/trident/i).exec(navigator.userAgent);
-    }
-    function isEdge() {
-        return navigator && !!(/edge/i).exec(navigator.userAgent);
-    }
 
     Keyboard = function (defaults) {
         this._keyDownList = {};         // List of depressed keys
@@ -68,7 +53,7 @@ var Keyboard, Mouse;
             // remote systems. Fake a release of these keys until
             // there is a way to detect AltGraph properly.
             var fakeAltGraph = false;
-            if (down && isWindows()) {
+            if (down && kbdUtil.isWindows()) {
                 if ((code !== 'ControlLeft') &&
                     (code !== 'AltRight') &&
                     ('ControlLeft' in this._keyDownList) &&
@@ -148,7 +133,7 @@ var Keyboard, Mouse;
             // keys around a bit to make things more sane for the remote
             // server. This method is used by RealVNC and TigerVNC (and
             // possibly others).
-            if (isMac()) {
+            if (kbdUtil.isMac()) {
                 switch (keysym) {
                 case KeyTable.XK_Super_L:
                     keysym = KeyTable.XK_Alt_L;
@@ -175,7 +160,7 @@ var Keyboard, Mouse;
             // state change events. That gets extra confusing for CapsLock
             // which toggles on each press, but not on release. So pretend
             // it was a quick press and release of the button.
-            if (isMac() && (code === 'CapsLock')) {
+            if (kbdUtil.isMac() && (code === 'CapsLock')) {
                 this._sendKeyEvent(KeyTable.XK_Caps_Lock, 'CapsLock', true);
                 this._sendKeyEvent(KeyTable.XK_Caps_Lock, 'CapsLock', false);
                 Util.stopEvent(e);
@@ -186,7 +171,7 @@ var Keyboard, Mouse;
             // a keypress event as well
             // (IE and Edge has a broken KeyboardEvent.key, so we can't
             // just check for the presence of that field)
-            if (!keysym && (!e.key || isIE() || isEdge())) {
+            if (!keysym && (!e.key || kbdUtil.isIE() || kbdUtil.isEdge())) {
                 this._pendingKey = code;
                 // However we might not get a keypress event if the key
                 // is non-printable, which needs some special fallback
@@ -280,7 +265,7 @@ var Keyboard, Mouse;
             var code = this._getKeyCode(e);
 
             // See comment in _handleKeyDown()
-            if (isMac() && (code === 'CapsLock')) {
+            if (kbdUtil.isMac() && (code === 'CapsLock')) {
                 this._sendKeyEvent(KeyTable.XK_Caps_Lock, 'CapsLock', true);
                 this._sendKeyEvent(KeyTable.XK_Caps_Lock, 'CapsLock', false);
                 return;

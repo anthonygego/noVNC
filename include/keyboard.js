@@ -188,7 +188,12 @@ var kbdUtil = (function() {
     return {
         getKey : getKey,
         getKeycode : getKeycode,
-        getKeysym : getKeysym
+        getKeysym : getKeysym,
+        isMac: isMac,
+        isLinux: isLinux,
+        isWindows: isWindows,
+        isEdge: isEdge,
+        isIE: isIE
     };
 })();
 
