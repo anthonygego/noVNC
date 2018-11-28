@@ -296,12 +296,12 @@ var Keyboard, Mouse;
             //Util.Debug(">> Keyboard.grab");
             var c = this._target;
 
-            c.addEventListener('keydown', this._eventHandlers.keydown);
-            c.addEventListener('keyup', this._eventHandlers.keyup);
-            c.addEventListener('keypress', this._eventHandlers.keypress);
+            Util.addEvent(c, 'keydown', this._eventHandlers.keydown);
+            Util.addEvent(c, 'keyup', this._eventHandlers.keyup);
+            Util.addEvent(c, 'keypress', this._eventHandlers.keypress);
 
             // Release (key up) if window loses focus
-            window.addEventListener('blur', this._eventHandlers.blur);
+            Util.addEvent(window, 'blur', this._eventHandlers.blur);
 
             //Util.Debug("<< Keyboard.grab");
         },
@@ -310,16 +310,16 @@ var Keyboard, Mouse;
             //Util.Debug(">> Keyboard.ungrab");
             var c = this._target;
 
-            c.removeEventListener('keydown', this._eventHandlers.keydown);
-            c.removeEventListener('keyup', this._eventHandlers.keyup);
-            c.removeEventListener('keypress', this._eventHandlers.keypress);
-            window.removeEventListener('blur', this._eventHandlers.blur);
+            Util.removeEvent(c, 'keydown', this._eventHandlers.keydown);
+            Util.removeEvent(c, 'keyup', this._eventHandlers.keyup);
+            Util.removeEvent(c, 'keypress', this._eventHandlers.keypress);
+            Util.removeEvent(window, 'blur', this._eventHandlers.blur);
 
             // Release (key up) all keys that are in a down state
             this._allKeysUp();
 
             //Util.Debug(">> Keyboard.ungrab");
-        },
+        }
     };
 
     Util.make_properties(Keyboard, [
