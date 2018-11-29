@@ -1,4 +1,4 @@
-// requires local modules: util, base64, websock, rfb, keyboard, keysym, keysymdef, input, jsunzip, des, display
+// requires local modules: util, base64, websock, rfb, keyboard, keysym, keysymdef, input, jsunzip, des, display, xtscancodes
 // requires test modules: fake.websocket, assertions
 /* jshint expr: true */
 var assert = chai.assert;
@@ -155,17 +155,11 @@ describe('Remote Frame Buffer Protocol Client', function() {
 
             it('should send QEMU extended events if supported', function () {
                 client._qemuExtKeyEventSupported = true;
-                expected = expected.concat(RFB.messages.QEMUExtendedKeyEvent(0x20, true, 0x0039));
+                var expected = RFB.messages.QEMUExtendedKeyEvent(0x20, true, 0x0039);
                 client.sendKey(0x20, 'Space', true);
                 expect(client._sock).to.have.sent(expected);
             });
 
-            it('should not send QEMU extended events if unknown key code', function () {
-                client._qemuExtKeyEventSupported = true;
-                expected = expected.concat(RFB.messages.keyEvent(123, 1));
-                client.sendKey(123, 'FooBar', true);
-                expect(client._sock).to.have.sent(expected);
-            });
         });
 
         describe('#clipboardPasteFrom', function () {
@@ -1637,18 +1631,19 @@ describe('Remote Frame Buffer Protocol Client', function() {
             });
 
             it('should send a key message on a key press', function () {
-                client._keyboard._onKeyPress(1234, 1);
-                expect(client._sock.send).to.have.been.calledOnce;
-                var key_msg = RFB.messages.keyEvent(1234, 1);
+                client._handleKeyEvent(0x41, 'KeyA', true);
+                var key_msg = RFB.messages.keyEvent(0x41, 1);
                 expect(client._sock.send).to.have.been.calledWith(key_msg);
             });
 
             it('should not send messages in view-only mode', function () {
                 client._view_only = true;
-                client._keyboard._onKeyPress(1234, 1);
-                expect(client._sock.send).to.not.have.been.called;
+                sinon.spy(client._sock, 'flush');
+                client._handleKeyEvent('a', 'KeyA', true);
+                expect(client._sock.flush).to.not.have.been.called;
             });
         });
+
 
         describe('WebSocket event handlers', function () {
             var client;

@@ -166,13 +166,12 @@ var RFB;
         }
 
         this._keyboard = new Keyboard({target: this._focusContainer,
-                                       onKeyPress: this._handleKeyPress.bind(this)});
+                                       onKeyEvent: this._handleKeyEvent.bind(this)});
 
 
         this._mouse = new Mouse({target: this._target,
                                  onMouseButton: this._handleMouseButton.bind(this),
-                                 onMouseMove: this._handleMouseMove.bind(this),
-                                 notify: this._keyboard.sync.bind(this._keyboard)});
+                                 onMouseMove: this._handleMouseMove.bind(this)});
 
         this._sock = new Websock();
         this._sock.on('message', this._handle_message.bind(this));
@@ -564,7 +563,7 @@ var RFB;
             }
         },
 
-        _handleKeyPress: function (keysym, code, down) {
+        _handleKeyEvent: function (keysym, code, down) {
             this.sendKey(keysym, code, down);
         },
 

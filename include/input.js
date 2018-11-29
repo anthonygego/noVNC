@@ -18,22 +18,14 @@ var Keyboard, Mouse;
     //
 
     Keyboard = function (defaults) {
-        this._keyDownList = [];         // List of depressed keys
+        this._keyDownList = {};         // List of depressed keys
                                         // (even if they are happy)
+        this._pendingKey = null;        // Key waiting for keypress
 
         Util.set_defaults(this, defaults, {
             'target': document,
             'focused': true
         });
-
-        // create the keyboard handler
-        this._handler = new KeyEventDecoder(kbdUtil.ModifierSync(),
-            VerifyCharModifier( /* jshint newcap: false */
-                TrackKeyState(
-                    EscapeModifiers(this._handleRfbEvent.bind(this))
-                )
-            )
-        ); /* jshint newcap: true */
 
         // keep these here so we can refer to them later
         this._eventHandlers = {
@@ -47,59 +39,250 @@ var Keyboard, Mouse;
     Keyboard.prototype = {
         // private methods
 
-        _handleRfbEvent: function (e) {
-            if (this._onKeyPress) {
-                Util.Debug("onKeyPress " + (e.type == 'keydown' ? "down" : "up") +
-                           ", keysym: " + e.keysym.keysym + "(" + e.keysym.keyname + ")");
-                this._onKeyPress(e.keysym.keysym, e.keycode, e.type == 'keydown');
+        _sendKeyEvent: function (keysym, code, down) {
+            if (!this._onKeyEvent) {
+                return;
             }
+
+            Util.Debug("onKeyEvent " + (down ? "down" : "up") +
+                      ", keysym: " + keysym, ", code: " + code);
+
+            // Windows sends CtrlLeft+AltRight when you press
+            // AltGraph, which tends to confuse the hell out of
+            // remote systems. Fake a release of these keys until
+            // there is a way to detect AltGraph properly.
+            var fakeAltGraph = false;
+            if (down && kbdUtil.isWindows()) {
+                if ((code !== 'ControlLeft') &&
+                    (code !== 'AltRight') &&
+                    ('ControlLeft' in this._keyDownList) &&
+                    ('AltRight' in this._keyDownList)) {
+                    fakeAltGraph = true;
+                    this._onKeyEvent(this._keyDownList['AltRight'],
+                                     'AltRight', false);
+                    this._onKeyEvent(this._keyDownList['ControlLeft'],
+                                     'ControlLeft', false);
+                }
+            }
+
+            this._onKeyEvent(keysym, code, down);
+
+            if (fakeAltGraph) {
+                this._onKeyEvent(this._keyDownList['ControlLeft'],
+                                 'ControlLeft', true);
+                this._onKeyEvent(this._keyDownList['AltRight'],
+                                 'AltRight', true);
+            }
+        },
+
+        _getKeyCode: function (e) {
+            var code = kbdUtil.getKeycode(e);
+            if (code !== 'Unidentified') {
+                return code;
+            }
+
+            // Unstable, but we don't have anything else to go on
+            // (don't use it for 'keypress' events thought since
+            // WebKit sets it to the same as charCode)
+            if (e.keyCode && (e.type !== 'keypress')) {
+                // 229 is used for composition events
+                if (e.keyCode !== 229) {
+                    return 'Platform' + e.keyCode;
+                }
+            }
+
+            // A precursor to the final DOM3 standard. Unfortunately it
+            // is not layout independent, so it is as bad as using keyCode
+            if (e.keyIdentifier) {
+                // Non-character key?
+                if (e.keyIdentifier.substr(0, 2) !== 'U+') {
+                    return e.keyIdentifier;
+                }
+
+                var codepoint = parseInt(e.keyIdentifier.substr(2), 16);
+                var char = String.fromCharCode(codepoint);
+                // Some implementations fail to uppercase the symbols
+                char = char.toUpperCase();
+
+                return 'Platform' + char.charCodeAt();
+            }
+
+            return 'Unidentified';
         },
 
         _handleKeyDown: function (e) {
-            if (!this._focused) { return true; }
+            var code = this._getKeyCode(e);
+            var keysym = kbdUtil.getKeysym(e);
 
-            if (this._handler.keydown(e)) {
-                // Suppress bubbling/default actions
+            // We cannot handle keys we cannot track, but we also need
+            // to deal with virtual keyboards which omit key info
+            // (iOS omits tracking info on keyup events, which forces us to
+            // special treat that platform here)
+            if ((code === 'Unidentified') || kbdUtil.isIOS()) {
+                if (keysym) {
+                    // If it's a virtual keyboard then it should be
+                    // sufficient to just send press and release right
+                    // after each other
+                    this._sendKeyEvent(keysym, code, true);
+                    this._sendKeyEvent(keysym, code, false);
+                }
+
                 Util.stopEvent(e);
-                return false;
-            } else {
-                // Allow the event to bubble and become a keyPress event which
-                // will have the character code translated
-                return true;
+                return;
             }
+
+            // Alt behaves more like AltGraph on macOS, so shuffle the
+            // keys around a bit to make things more sane for the remote
+            // server. This method is used by RealVNC and TigerVNC (and
+            // possibly others).
+            if (kbdUtil.isMac()) {
+                switch (keysym) {
+                case XK_Super_L:
+                    keysym = XK_Alt_L;
+                    break;
+                case XK_Super_R:
+                    keysym = XK_Super_L;
+                    break;
+                case XK_Alt_L:
+                    keysym = XK_Mode_switch;
+                    break;
+                case XK_Alt_R:
+                    keysym = XK_ISO_Level3_Shift;
+                    break;
+                }
+            }
+
+            // Is this key already pressed? If so, then we must use the
+            // same keysym or we'll confuse the server
+            if (code in this._keyDownList) {
+                keysym = this._keyDownList[code];
+            }
+
+            // macOS doesn't send proper key events for modifiers, only
+            // state change events. That gets extra confusing for CapsLock
+            // which toggles on each press, but not on release. So pretend
+            // it was a quick press and release of the button.
+            if (kbdUtil.isMac() && (code === 'CapsLock')) {
+                this._sendKeyEvent(XK_Caps_Lock, 'CapsLock', true);
+                this._sendKeyEvent(XK_Caps_Lock, 'CapsLock', false);
+                Util.stopEvent(e);
+                return;
+            }
+
+            // If this is a legacy browser then we'll need to wait for
+            // a keypress event as well
+            // (IE and Edge has a broken KeyboardEvent.key, so we can't
+            // just check for the presence of that field)
+            if (!keysym && (!e.key || kbdUtil.isIE() || kbdUtil.isEdge())) {
+                this._pendingKey = code;
+                // However we might not get a keypress event if the key
+                // is non-printable, which needs some special fallback
+                // handling
+                setTimeout(this._handleKeyPressTimeout.bind(this), 10, e);
+                return;
+            }
+
+            this._pendingKey = null;
+            Util.stopEvent(e);
+
+            this._keyDownList[code] = keysym;
+
+            this._sendKeyEvent(keysym, code, true);
         },
 
+        // Legacy event for browsers without code/key
         _handleKeyPress: function (e) {
-            if (!this._focused) { return true; }
+            Util.stopEvent(e);
 
-            if (this._handler.keypress(e)) {
-                // Suppress bubbling/default actions
-                Util.stopEvent(e);
-                return false;
-            } else {
-                // Allow the event to bubble and become a keyPress event which
-                // will have the character code translated
-                return true;
+            // Are we expecting a keypress?
+            if (this._pendingKey === null) {
+                return;
             }
+
+            var code = this._getKeyCode(e);
+            var keysym = kbdUtil.getKeysym(e);
+
+            // The key we were waiting for?
+            if ((code !== 'Unidentified') && (code != this._pendingKey)) {
+                return;
+            }
+
+            code = this._pendingKey;
+            this._pendingKey = null;
+
+            if (!keysym) {
+                console.log('keypress with no keysym:', e);
+                return;
+            }
+
+            this._keyDownList[code] = keysym;
+
+            this._sendKeyEvent(keysym, code, true);
+        },
+        _handleKeyPressTimeout: function (e) {
+            // Did someone manage to sort out the key already?
+            if (this._pendingKey === null) {
+                return;
+            }
+
+            var code, keysym;
+
+            code = this._pendingKey;
+            this._pendingKey = null;
+
+            // We have no way of knowing the proper keysym with the
+            // information given, but the following are true for most
+            // layouts
+            if ((e.keyCode >= 0x30) && (e.keyCode <= 0x39)) {
+                // Digit
+                keysym = e.keyCode;
+            } else if ((e.keyCode >= 0x41) && (e.keyCode <= 0x5a)) {
+                // Character (A-Z)
+                var char = String.fromCharCode(e.keyCode);
+                // A feeble attempt at the correct case
+                if (e.shiftKey)
+                    char = char.toUpperCase();
+                else
+                    char = char.toLowerCase();
+                keysym = char.charCodeAt();
+            } else {
+                // Unknown, give up
+                keysym = 0;
+            }
+
+            this._keyDownList[code] = keysym;
+
+            this._sendKeyEvent(keysym, code, true);
         },
 
         _handleKeyUp: function (e) {
-            if (!this._focused) { return true; }
+            Util.stopEvent(e);
 
-            if (this._handler.keyup(e)) {
-                // Suppress bubbling/default actions
-                Util.stopEvent(e);
-                return false;
-            } else {
-                // Allow the event to bubble and become a keyPress event which
-                // will have the character code translated
-                return true;
+            var code = this._getKeyCode(e);
+
+            // See comment in _handleKeyDown()
+            if (kbdUtil.isMac() && (code === 'CapsLock')) {
+                this._sendKeyEvent(XK_Caps_Lock, 'CapsLock', true);
+                this._sendKeyEvent(XK_Caps_Lock, 'CapsLock', false);
+                return;
             }
+
+            // Do we really think this key is down?
+            if (!(code in this._keyDownList)) {
+                return;
+            }
+
+            this._sendKeyEvent(this._keyDownList[code], code, false);
+
+            delete this._keyDownList[code];
         },
 
         _allKeysUp: function () {
             Util.Debug(">> Keyboard.allKeysUp");
-            this._handler.releaseAll();
+            for (var code in this._keyDownList) {
+                this._sendKeyEvent(this._keyDownList[code], code, false);
+            };
+            this._keyDownList = {};
             Util.Debug("<< Keyboard.allKeysUp");
         },
 
@@ -109,12 +292,12 @@ var Keyboard, Mouse;
             //Util.Debug(">> Keyboard.grab");
             var c = this._target;
 
-            Util.addEvent(c, 'keydown', this._eventHandlers.keydown);
-            Util.addEvent(c, 'keyup', this._eventHandlers.keyup);
-            Util.addEvent(c, 'keypress', this._eventHandlers.keypress);
+            c.addEventListener('keydown', this._eventHandlers.keydown);
+            c.addEventListener('keyup', this._eventHandlers.keyup);
+            c.addEventListener('keypress', this._eventHandlers.keypress);
 
             // Release (key up) if window loses focus
-            Util.addEvent(window, 'blur', this._eventHandlers.blur);
+            window.addEventListener('blur', this._eventHandlers.blur);
 
             //Util.Debug("<< Keyboard.grab");
         },
@@ -123,27 +306,23 @@ var Keyboard, Mouse;
             //Util.Debug(">> Keyboard.ungrab");
             var c = this._target;
 
-            Util.removeEvent(c, 'keydown', this._eventHandlers.keydown);
-            Util.removeEvent(c, 'keyup', this._eventHandlers.keyup);
-            Util.removeEvent(c, 'keypress', this._eventHandlers.keypress);
-            Util.removeEvent(window, 'blur', this._eventHandlers.blur);
+            c.removeEventListener('keydown', this._eventHandlers.keydown);
+            c.removeEventListener('keyup', this._eventHandlers.keyup);
+            c.removeEventListener('keypress', this._eventHandlers.keypress);
+            window.removeEventListener('blur', this._eventHandlers.blur);
 
             // Release (key up) all keys that are in a down state
             this._allKeysUp();
 
             //Util.Debug(">> Keyboard.ungrab");
         },
-
-        sync: function (e) {
-            this._handler.syncModifiers(e);
-        }
     };
 
     Util.make_properties(Keyboard, [
         ['target',     'wo', 'dom'],  // DOM element that captures keyboard input
         ['focused',    'rw', 'bool'], // Capture and send key events
 
-        ['onKeyPress', 'rw', 'func'] // Handler for key press/release
+        ['onKeyEvent', 'rw', 'func'] // Handler for key press/release
     ]);
 
     //
@@ -199,10 +378,6 @@ var Keyboard, Mouse;
 
         _handleMouseButton: function (e, down) {
             if (!this._focused) { return true; }
-
-            if (this._notify) {
-                this._notify(e);
-            }
 
             var evt = (e ? e : window.event);
             var pos = Util.getEventPosition(e, this._target, this._scale);
@@ -271,10 +446,6 @@ var Keyboard, Mouse;
         _handleMouseWheel: function (e) {
             if (!this._focused) { return true; }
 
-            if (this._notify) {
-                this._notify(e);
-            }
-
             var evt = (e ? e : window.event);
             var pos = Util.getEventPosition(e, this._target, this._scale);
             var wheelData = evt.detail ? evt.detail * -1 : evt.wheelDelta / 40;
@@ -295,10 +466,6 @@ var Keyboard, Mouse;
 
         _handleMouseMove: function (e) {
             if (! this._focused) { return true; }
-
-            if (this._notify) {
-                this._notify(e);
-            }
 
             var evt = (e ? e : window.event);
             var pos = Util.getEventPosition(e, this._target, this._scale);
@@ -377,7 +544,6 @@ var Keyboard, Mouse;
 
     Util.make_properties(Mouse, [
         ['target',         'ro', 'dom'],   // DOM element that captures mouse input
-        ['notify',         'ro', 'func'],  // Function to call to notify whenever a mouse event is received
         ['focused',        'rw', 'bool'],  // Capture and send mouse clicks/movement
         ['scale',          'rw', 'float'], // Viewport scale factor 0.0 - 1.0
 
