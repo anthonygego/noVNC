@@ -20,7 +20,7 @@ var UI;
     window.onload = function () { UI.keyboardinputReset(); };
     Util.load_scripts(["webutil.js", "base64.js", "websock.js", "des.js",
                        "keysymdef.js", "keyboard.js", "input.js", "display.js",
-                       "jsunzip.js", "rfb.js", "keysym.js"]);
+                       "jsunzip.js", "rfb.js", "keysym.js", "xtscancodes.js"]);
 
     UI = {
 
@@ -855,7 +855,7 @@ var UI;
 
             // Send the key events
             for (i = 0; i < backspaces; i++) {
-                UI.rfb.sendKey(XK_BackSpace);
+                UI.rfb.sendKey(XK_BackSpace, "Backspace");
             }
             for (i = newLen - inputs; i < newLen; i++) {
                 UI.rfb.sendKey(newValue.charCodeAt(i));

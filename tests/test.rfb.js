@@ -130,27 +130,41 @@ describe('Remote Frame Buffer Protocol Client', function() {
 
             it('should send a single key with the given code and state (down = true)', function () {
                 var expected = RFB.messages.keyEvent(123, 1);
-                client.sendKey(123, true);
+                client.sendKey(123, 'Key123', true);
                 expect(client._sock).to.have.sent(expected);
             });
 
             it('should send both a down and up event if the state is not specified', function () {
                 var expected = RFB.messages.keyEvent(123, 1);
                 expected = expected.concat(RFB.messages.keyEvent(123, 0));
-                client.sendKey(123);
+                client.sendKey(123, 'Key123');
                 expect(client._sock).to.have.sent(expected);
             });
 
             it('should not send the key if we are not in a normal state', function () {
                 client._rfb_state = "broken";
-                client.sendKey(123);
+                client.sendKey(123, 'Key123');
                 expect(client._sock.send).to.not.have.been.called;
             });
 
             it('should not send the key if we are set as view_only', function () {
                 client._view_only = true;
-                client.sendKey(123);
+                client.sendKey(123, 'Key123');
                 expect(client._sock.send).to.not.have.been.called;
+            });
+
+            it('should send QEMU extended events if supported', function () {
+                client._qemuExtKeyEventSupported = true;
+                expected = expected.concat(RFB.messages.QEMUExtendedKeyEvent(0x20, true, 0x0039));
+                client.sendKey(0x20, 'Space', true);
+                expect(client._sock).to.have.sent(expected);
+            });
+
+            it('should not send QEMU extended events if unknown key code', function () {
+                client._qemuExtKeyEventSupported = true;
+                expected = expected.concat(RFB.messages.keyEvent(123, 1));
+                client.sendKey(123, 'FooBar', true);
+                expect(client._sock).to.have.sent(expected);
             });
         });
 

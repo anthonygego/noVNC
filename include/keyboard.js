@@ -300,7 +300,7 @@ function KeyEventDecoder(modifierState, next) {
         }
     }
     function process(evt, type) {
-        var result = {type: type};
+        var result = {type: type, keycode: evt.code};
         var keyId = kbdUtil.getKey(evt);
         if (keyId) {
             result.keyId = keyId;

@@ -47,13 +47,14 @@ var RFB;
             ['Cursor',           -239 ],
 
             // Psuedo-encoding settings
-            //['JPEG_quality_lo',   -32 ],
-            ['JPEG_quality_med',    -26 ],
-            //['JPEG_quality_hi',   -23 ],
-            //['compress_lo',      -255 ],
-            ['compress_hi',        -247 ],
-            ['last_rect',          -224 ],
-            ['xvp',                -309 ]
+            //['JPEG_quality_lo',     -32 ],
+            ['JPEG_quality_med',      -26 ],
+            //['JPEG_quality_hi',     -23 ],
+            //['compress_lo',        -255 ],
+            ['compress_hi',          -247 ],
+            ['last_rect',            -224 ],
+            ['QEMUExtendedKeyEvent', -258 ],
+            ['xvp',                  -309 ]
         ];
 
         this._encHandlers = {};
@@ -112,6 +113,9 @@ var RFB;
         this._viewportDragging = false;
         this._viewportDragPos = {};
 
+       // QEMU Extended Key Event support - default to false
+        this._qemuExtKeyEventSupported = false;
+
         // set the default value on user-facing properties
         Util.set_defaults(this, defaults, {
             'target': 'null',                       // VNC display rendering Canvas object
@@ -163,6 +167,7 @@ var RFB;
 
         this._keyboard = new Keyboard({target: this._focusContainer,
                                        onKeyPress: this._handleKeyPress.bind(this)});
+
 
         this._mouse = new Mouse({target: this._target,
                                  onMouseButton: this._handleMouseButton.bind(this),
@@ -282,16 +287,34 @@ var RFB;
 
         // Send a key press. If 'down' is not specified then send a down key
         // followed by an up key.
-        sendKey: function (code, down) {
+        sendKey: function (keysym, code, down) {
             if (this._rfb_state !== "normal" || this._view_only) { return false; }
             var arr = [];
             if (typeof down !== 'undefined') {
-                Util.Info("Sending key code (" + (down ? "down" : "up") + "): " + code);
-                arr = arr.concat(RFB.messages.keyEvent(code, down ? 1 : 0));
+                if (this._qemuExtKeyEventSupported) {
+                    var scancode = XtScancode[code];
+
+                    if (scancode === undefined) {
+                        Util.Error('Unable to find a xt scancode for code: ' + code);
+                        // FIXME: not in the spec, but this is what
+                        // gtk-vnc does
+                        scancode = 0;
+                    }
+
+                    // 0 is NoSymbol
+                    keysym = keysym || 0;
+
+                    Util.Info("Sending key (" + (down ? "down" : "up") + "): keysym " + keysym + ", scancode " + scancode);
+
+                    arr = arr.concat(RFB.messages.QEMUExtendedKeyEvent(keysym, down, scancode));
+                } else {
+                    Util.Info("Sending key code (" + (down ? "down" : "up") + "): " + keysym);
+                    arr = arr.concat(RFB.messages.keyEvent(keysym, down ? 1 : 0));
+                }
             } else {
-                Util.Info("Sending key code (down + up): " + code);
-                arr = arr.concat(RFB.messages.keyEvent(code, 1));
-                arr = arr.concat(RFB.messages.keyEvent(code, 0));
+                Util.Info("Sending key code (down + up): " + keysym);
+                this.sendKey(keysym, code, true);
+                this.sendKey(keysym, code, false);
             }
             this._sock.send(arr);
         },
@@ -541,9 +564,8 @@ var RFB;
             }
         },
 
-        _handleKeyPress: function (keysym, down) {
-            if (this._view_only) { return; } // View only, skip keyboard, events
-            this._sock.send(RFB.messages.keyEvent(keysym, down));
+        _handleKeyPress: function (keysym, code, down) {
+            this.sendKey(keysym, code, down);
         },
 
         _handleMouseButton: function (x, y, down, bmask) {
@@ -1238,6 +1260,28 @@ var RFB;
             return arr;
         },
 
+        QEMUExtendedKeyEvent: function (keysym, down, keycode) {
+            function getRFBkeycode(xt_scancode) {
+                var upperByte = (keycode >> 8);
+                var lowerByte = (keycode & 0x00ff);
+                if (upperByte === 0xe0 && lowerByte < 0x7f) {
+                    lowerByte = lowerByte | 0x80;
+                    return lowerByte;
+                }
+                return xt_scancode;
+            }
+
+            var arr = [255];
+            arr.push8(0);
+            arr.push16(down);
+            arr.push32(keysym);
+
+            var RFBkeycode = getRFBkeycode(keycode);
+            arr.push32(RFBkeycode);
+
+            return arr;
+        },
+
         pointerEvent: function (x, y, mask) {
             var arr = [5];  // msg-type
             arr.push8(mask);
@@ -1869,6 +1913,19 @@ var RFB;
 
             Util.Debug("<< set_cursor");
             return true;
+        },
+
+        QEMUExtendedKeyEvent: function () {
+            this._FBU.rects--;
+
+            // Old Safari doesn't support creating keyboard events
+            try {
+                var keyboardEvent = document.createEvent("keyboardEvent");
+                if (keyboardEvent.code !== undefined) {
+                    this._qemuExtKeyEventSupported = true;
+                }
+            } catch (err) {
+            }
         },
 
         JPEG_quality_lo: function () {

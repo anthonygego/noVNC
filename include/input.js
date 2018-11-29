@@ -51,7 +51,7 @@ var Keyboard, Mouse;
             if (this._onKeyPress) {
                 Util.Debug("onKeyPress " + (e.type == 'keydown' ? "down" : "up") +
                            ", keysym: " + e.keysym.keysym + "(" + e.keysym.keyname + ")");
-                this._onKeyPress(e.keysym.keysym, e.type == 'keydown');
+                this._onKeyPress(e.keysym.keysym, e.keycode, e.type == 'keydown');
             }
         },
 
